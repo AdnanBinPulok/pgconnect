@@ -6,7 +6,7 @@ from typing import Optional, List, Any, Dict
 from . import Connection, RedisConnection
 from cachetools import TTLCache
 import asyncio
-from .Filters import Between, Like, In, Increment, Decrement
+from .Filters import Between, Like, In, Increment, Decrement, Equal, NotEqual, GreaterThan, LessThan, NotIn
 
 
 class Table:
@@ -673,7 +673,7 @@ class Table:
         params = []
 
         for key, value in where.items():
-            if isinstance(value, (Between, Like, In)):
+            if isinstance(value, (Between, Like, In, Increment, Decrement, Equal, NotEqual, GreaterThan, LessThan, NotIn)):
                 conditions.append(value.to_sql(key, params))
             else:
                 params.append(value)
