@@ -64,6 +64,66 @@ class Decrement:
     def to_sql(self, field_name: str, params: list) -> str:
         params.append(self.value)
         return f"{field_name} - ${len(params)}"
+    
+
+@dataclass
+class Equal:
+    value: Any
+    
+    def to_sql(self, field_name: str, params: list) -> str:
+        params.append(self.value)
+        return f"{field_name} = ${len(params)}"
+    
+
+@dataclass
+class NotEqual:
+    value: Any
+    
+    def to_sql(self, field_name: str, params: list) -> str:
+        params.append(self.value)
+        return f"{field_name} != ${len(params)}"
+    
+
+@dataclass
+class GreaterThan:
+    value: Any
+    
+    def to_sql(self, field_name: str, params: list) -> str:
+        params.append(self.value)
+        return f"{field_name} > ${len(params)}"
+    
+@dataclass
+class LessThan:
+    value: Any
+    
+    def to_sql(self, field_name: str, params: list) -> str:
+        params.append(self.value)
+        return f"{field_name} < ${len(params)}"
+    
+
+@dataclass
+class NotIn:
+    values: list
+    
+    def __post_init__(self):
+        # Convert to list and remove duplicates
+        self.values = list(dict.fromkeys(self.values))
+        
+        # Convert string numbers to integers
+        if all(str(v).isdigit() for v in self.values):
+            self.values = [int(v) for v in self.values]
+    
+    def to_sql(self, field_name: str, params: list) -> str:
+        params.extend(self.values)
+        placeholders = [f"${len(params)-len(self.values)+i+1}" for i in range(len(self.values))]
+        
+        if all(isinstance(v, int) for v in self.values):
+            # Cast both the field and array elements to INTEGER for comparison
+            return f"CAST({field_name} AS INTEGER) NOT IN (SELECT UNNEST(ARRAY[{','.join(placeholders)}]::INTEGER[]))"
+        else:
+            return f"{field_name} NOT IN ({','.join(placeholders)})"
+
+
 
 class Filters:
     @staticmethod
@@ -87,3 +147,23 @@ class Filters:
     @staticmethod
     def Decrement(value: Union[int, float]) -> Decrement:
         return Decrement(value)
+    
+    @staticmethod
+    def Equal(value: Any) -> Equal:
+        return Equal(value)
+    
+    @staticmethod
+    def NotEqual(value: Any) -> NotEqual:
+        return NotEqual(value)
+    
+    @staticmethod
+    def GreaterThan(value: Any) -> GreaterThan:
+        return GreaterThan(value)
+    
+    @staticmethod
+    def LessThan(value: Any) -> LessThan:
+        return LessThan(value)
+    
+    @staticmethod
+    def NotIn(values: list) -> NotIn:
+        return NotIn(values)
