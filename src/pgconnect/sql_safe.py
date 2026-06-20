@@ -1,6 +1,3 @@
-DEFAULT_MAX_LIMIT = 1000
-
-
 def validate_column(name: str, allowed: set[str]) -> str:
     if name not in allowed:
         raise ValueError(f"Invalid column: {name}")
@@ -18,7 +15,7 @@ def validate_order(direction: str) -> str:
     return order
 
 
-def validate_pagination(page: int, limit: int, max_limit: int = DEFAULT_MAX_LIMIT) -> tuple[int, int]:
+def validate_pagination(page: int, limit: int, max_limit: int) -> tuple[int, int]:
     page = int(page)
     limit = int(limit)
 

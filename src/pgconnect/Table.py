@@ -24,6 +24,7 @@ class Table:
             cache_maxsize: int = 1000,
             indexes: Optional[List[Dict[str, Any]]] = None,
             fetch_timeout: int = 5,
+            max_limit_pagination: int = 1000,
             debug_mode: bool = False
     ) -> None:
         """
@@ -65,6 +66,8 @@ class Table:
         self.caches = TTLCache(maxsize=cache_maxsize, ttl=self.cache_ttl) if cache else None
         self.timeout = fetch_timeout  # Set the timeout to the provided fetch_timeout
         self.indexes = indexes if indexes is not None else []
+
+        self.max_limit_pagination = max_limit_pagination
 
     def _allowed_columns(self) -> set[str]:
         return {column.name for column in self.columns}
@@ -838,7 +841,7 @@ class Table:
         """
         connection = None
         try:
-            page, limit = validate_pagination(page, limit)
+            page, limit = validate_pagination(page, limit, self.max_limit_pagination)
             offset = (page - 1) * limit
             where = where or {}
             where_clause, params = await self._build_where_clause(where)
@@ -989,7 +992,7 @@ class Table:
             validated_by = validate_columns(by, self._allowed_columns())
             validated_order_by = validate_column(order_by, self._allowed_columns())
             validated_order = validate_order(order)
-            page, limit = validate_pagination(page, limit)
+            page, limit = validate_pagination(page, limit, self.max_limit_pagination)
             offset = (page - 1) * limit
             
             # Start parameter index at 1

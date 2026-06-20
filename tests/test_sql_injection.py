@@ -5,7 +5,6 @@ from pgconnect.sql_safe import (
     validate_columns,
     validate_order,
     validate_pagination,
-    DEFAULT_MAX_LIMIT,
 )
 
 
@@ -43,16 +42,17 @@ def test_validate_order_accepts_asc_desc():
 
 
 def test_validate_pagination_rejects_invalid_values():
+    max_limit = 1000
     with pytest.raises(ValueError, match="page must be >= 1"):
-        validate_pagination(0, 10)
+        validate_pagination(0, 10, max_limit)
     with pytest.raises(ValueError, match="limit must be >= 1"):
-        validate_pagination(1, 0)
-    with pytest.raises(ValueError, match=f"limit must be <= {DEFAULT_MAX_LIMIT}"):
-        validate_pagination(1, DEFAULT_MAX_LIMIT + 1)
+        validate_pagination(1, 0, max_limit)
+    with pytest.raises(ValueError, match=f"limit must be <= {max_limit}"):
+        validate_pagination(1, max_limit + 1, max_limit)
 
 
 def test_validate_pagination_coerces_numeric_strings():
-    page, limit = validate_pagination("2", "25")
+    page, limit = validate_pagination("2", "25", 1000)
     assert page == 2
     assert limit == 25
 
