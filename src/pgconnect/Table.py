@@ -7,6 +7,7 @@ from . import Connection, RedisConnection
 from cachetools import TTLCache
 import asyncio
 from .Filters import Between, Like, In, Increment, Decrement, Equal, NotEqual, GreaterThan, LessThan, NotIn
+from .sql_safe import validate_column, validate_columns, validate_order, validate_pagination
 
 
 class Table:
@@ -64,6 +65,9 @@ class Table:
         self.caches = TTLCache(maxsize=cache_maxsize, ttl=self.cache_ttl) if cache else None
         self.timeout = fetch_timeout  # Set the timeout to the provided fetch_timeout
         self.indexes = indexes if indexes is not None else []
+
+    def _allowed_columns(self) -> set[str]:
+        return {column.name for column in self.columns}
 
     def clear_cache(self):
         """
@@ -606,11 +610,10 @@ class Table:
                             print(f"Error setting cache asynchronously: {e}")
 
             return rows
+        except ValueError:
+            raise
         except asyncpg.PostgresError as e:
             print(f"Failed to update table {self.name}: {e}")
-            return None
-        except ValueError as e:
-            print(f"ValueError: {e}")
             return None
         except Exception as e:
             print(traceback.format_exc())
@@ -648,11 +651,10 @@ class Table:
                         await self.deleteCache(cache_key)
 
             return rows
+        except ValueError:
+            raise
         except asyncpg.PostgresError as e:
             print(f"Failed to delete from table {self.name}: {e}")
-            return None
-        except ValueError as e:
-            print(f"ValueError: {e}")
             return None
         except Exception as e:
             print(traceback.format_exc())
@@ -672,12 +674,14 @@ class Table:
         conditions = []
         params = []
 
+        allowed = self._allowed_columns()
         for key, value in where.items():
+            column = validate_column(key, allowed)
             if isinstance(value, (Between, Like, In, Increment, Decrement, Equal, NotEqual, GreaterThan, LessThan, NotIn)):
-                conditions.append(value.to_sql(key, params))
+                conditions.append(value.to_sql(column, params))
             else:
                 params.append(value)
-                conditions.append(f"{key} = ${len(params)}")
+                conditions.append(f"{column} = ${len(params)}")
 
         return " AND ".join(conditions), params
 
@@ -715,15 +719,23 @@ class Table:
         Warning:
             This function does not support caching.
         """
+        connection = None
         try:
-            connection = await self._get_connection()
-            columns_clause = ", ".join(columns) if columns else "*"
+            if columns:
+                validated_columns = validate_columns(list(columns), self._allowed_columns())
+                columns_clause = ", ".join(validated_columns)
+            else:
+                columns_clause = "*"
             where_clause, params = await self._build_where_clause(where)
+
+            connection = await self._get_connection()
             query = f"SELECT {columns_clause} FROM {self.name} WHERE {where_clause}"
 
             await self.ensure_connection_available(connection)
             rows = await connection.fetch(query, *params, timeout=self.timeout)
             return rows
+        except ValueError:
+            raise
         except asyncpg.PostgresError as e:
             print(f"Failed to select from table {self.name}: {e}")
             return None
@@ -761,11 +773,10 @@ class Table:
                 if cache_key:
                     await self.setCache(cache_key, row)
             return row
+        except ValueError:
+            raise
         except asyncpg.PostgresError as e:
             print(f"Failed to get row from table {self.name}: {e}")
-            return None
-        except ValueError as e:
-            print(f"ValueError: {e}")
             return None
         except Exception as e:
             print(traceback.format_exc())
@@ -800,6 +811,8 @@ class Table:
                         except Exception as e:
                             print(f"Error setting cache asynchronously: {e}")
             return rows
+        except ValueError:
+            raise
         except asyncpg.PostgresError as e:
             print(f"Failed to get rows from table {self.name}: {e}")
             return None
@@ -823,11 +836,18 @@ class Table:
         Example:
             table.get_page(1, 10, where={'status': 'active', 'age': Filters.Between(18, 30)})
         """
+        connection = None
         try:
+            page, limit = validate_pagination(page, limit)
             offset = (page - 1) * limit
             where = where or {}
             where_clause, params = await self._build_where_clause(where)
-            order_clause = f"ORDER BY {order_by} {order}" if order_by else ""
+            if order_by:
+                validated_order_by = validate_column(order_by, self._allowed_columns())
+                validated_order = validate_order(order)
+                order_clause = f"ORDER BY {validated_order_by} {validated_order}"
+            else:
+                order_clause = ""
             
             query = f"""
                 SELECT * FROM {self.name} 
@@ -849,6 +869,8 @@ class Table:
                         except Exception as e:
                             print(f"Error setting cache asynchronously: {e}")
             return rows
+        except ValueError:
+            raise
         except asyncpg.PostgresError as e:
             print(f"Failed to get paginated rows from table {self.name}: {e}")
             return None
@@ -899,6 +921,8 @@ class Table:
             await self.ensure_connection_available(connection)
             count = await connection.fetchval(query, *params, timeout=self.timeout)
             return count
+        except ValueError:
+            raise
         except asyncpg.PostgresError as e:
             print(f"Failed to count rows in table {self.name}: {e}")
             return None
@@ -918,16 +942,16 @@ class Table:
         :return: True if any rows exist, False otherwise.
         """
         try:
-            where_clause = " AND ".join(f"{key} = ${i+1}" for i, key in enumerate(where.keys())) if where else "1=1"
+            where_clause, query_values = await self._build_where_clause(where)
             query = f"SELECT EXISTS (SELECT 1 FROM {self.name} WHERE {where_clause})"
-            
-            query_values = list(where.values())
 
             connection = await self._get_connection()
             # if connection is busy wait 1 second and try again
             await self.ensure_connection_available(connection)
             exists = await connection.fetchval(query, *query_values, timeout=self.timeout)
             return exists
+        except ValueError:
+            raise
         except asyncpg.PostgresError as e:
             print(f"Failed to check existence in table {self.name}: {e}")
             return None
@@ -957,17 +981,22 @@ class Table:
                 where={'status': 'active', 'age': Filters.Between(18, 30)}
             )
         """
+        connection = None
         try:
             if not by:
                 raise ValueError("No columns provided for search")
-            
+
+            validated_by = validate_columns(by, self._allowed_columns())
+            validated_order_by = validate_column(order_by, self._allowed_columns())
+            validated_order = validate_order(order)
+            page, limit = validate_pagination(page, limit)
             offset = (page - 1) * limit
             
             # Start parameter index at 1
             param_index = 1
             
             # Create the WHERE clause for the search columns with proper parameter index
-            search_clause = " OR ".join(f"{column}::text ILIKE ${param_index}" for column in by)
+            search_clause = " OR ".join(f"{column}::text ILIKE ${param_index}" for column in validated_by)
             query_values = [f"%{keyword}%"]
             
             # Handle additional where conditions
@@ -996,7 +1025,7 @@ class Table:
             query = f"""
                 SELECT * FROM {self.name} 
                 WHERE {search_clause} 
-                ORDER BY {order_by} {order} 
+                ORDER BY {validated_order_by} {validated_order} 
                 LIMIT {limit} OFFSET {offset}
             """
             
@@ -1005,11 +1034,10 @@ class Table:
             rows = await connection.fetch(query, *query_values, timeout=self.timeout)
             return rows
 
+        except ValueError:
+            raise
         except asyncpg.PostgresError as e:
             print(f"Failed to search table {self.name}: {e}")
-            return None
-        except ValueError as e:
-            print(f"ValueError: {e}")
             return None
         except Exception as e:
             print(traceback.format_exc())
@@ -1032,15 +1060,18 @@ class Table:
                 where={'status': 'active', 'age': Filters.Between(18, 30)}
             )
         """
+        connection = None
         try:
             if not by:
                 raise ValueError("No columns provided for search")
+
+            validated_by = validate_columns(by, self._allowed_columns())
             
             # Start parameter index at 1
             param_index = 1
             
             # Create the WHERE clause for the search columns with proper parameter index
-            search_clause = " OR ".join(f"{column}::text ILIKE ${param_index}" for column in by)
+            search_clause = " OR ".join(f"{column}::text ILIKE ${param_index}" for column in validated_by)
             query_values = [f"%{keyword}%"]
             
             # Handle additional where conditions
@@ -1073,11 +1104,10 @@ class Table:
             count = await connection.fetchval(query, *query_values, timeout=self.timeout)
             return count or 0
 
+        except ValueError:
+            raise
         except asyncpg.PostgresError as e:
             print(f"Failed to count search results in table {self.name}: {e}")
-            return None
-        except ValueError as e:
-            print(f"ValueError: {e}")
             return None
         except Exception as e:
             print(traceback.format_exc())
