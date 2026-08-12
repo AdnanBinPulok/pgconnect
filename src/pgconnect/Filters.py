@@ -123,7 +123,25 @@ class NotIn:
         else:
             return f"{field_name} NOT IN ({','.join(placeholders)})"
 
+@dataclass
+class IsNull:
+    def to_sql(self, field_name: str, params: list) -> str:
+        return f"{field_name} IS NULL"
+    
+@dataclass
+class IsNotNull:
+    def to_sql(self, field_name: str, params: list) -> str:
+        return f"{field_name} IS NOT NULL"
 
+@dataclass
+class IsTrue:
+    def to_sql(self, field_name: str, params: list) -> str:
+        return f"{field_name} IS TRUE"
+    
+@dataclass
+class IsFalse:
+    def to_sql(self, field_name: str, params: list) -> str:
+        return f"{field_name} IS FALSE"
 
 class Filters:
     @staticmethod
@@ -167,3 +185,19 @@ class Filters:
     @staticmethod
     def NotIn(values: list) -> NotIn:
         return NotIn(values)
+
+    @staticmethod
+    def IsNull() -> IsNull:
+        return IsNull()
+    
+    @staticmethod
+    def IsNotNull() -> IsNotNull:
+        return IsNotNull()
+    
+    @staticmethod
+    def IsTrue() -> IsTrue:
+        return IsTrue()
+    
+    @staticmethod
+    def IsFalse() -> IsFalse:
+        return IsFalse()

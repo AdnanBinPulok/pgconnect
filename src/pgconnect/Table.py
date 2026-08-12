@@ -6,7 +6,10 @@ from typing import Optional, List, Any, Dict
 from . import Connection, RedisConnection
 from cachetools import TTLCache
 import asyncio
-from .Filters import Between, Like, In, Increment, Decrement, Equal, NotEqual, GreaterThan, LessThan, NotIn
+from .Filters import (
+    Between, Like, In, Increment, Decrement, Equal, NotEqual,
+    GreaterThan, LessThan, NotIn, IsNull, IsNotNull, IsTrue, IsFalse,
+)
 from .sql_safe import validate_column, validate_columns, validate_order, validate_pagination
 
 
@@ -680,7 +683,10 @@ class Table:
         allowed = self._allowed_columns()
         for key, value in where.items():
             column = validate_column(key, allowed)
-            if isinstance(value, (Between, Like, In, Increment, Decrement, Equal, NotEqual, GreaterThan, LessThan, NotIn)):
+            if isinstance(value, (
+                Between, Like, In, Increment, Decrement, Equal, NotEqual,
+                GreaterThan, LessThan, NotIn, IsNull, IsNotNull, IsTrue, IsFalse,
+            )):
                 conditions.append(value.to_sql(column, params))
             else:
                 params.append(value)
