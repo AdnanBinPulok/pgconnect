@@ -1,6 +1,10 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional, Union
+from typing import Any, List, Optional, Union
+import json
+
+from .jsonb_path import JsonPath, build_json_path_expr
+
 
 @dataclass
 class Between:
@@ -143,6 +147,126 @@ class IsFalse:
     def to_sql(self, field_name: str, params: list) -> str:
         return f"{field_name} IS FALSE"
 
+
+_JSON_NESTED_OPS = (
+    Between, Like, In, Equal, NotEqual, GreaterThan, LessThan, NotIn,
+    IsNull, IsNotNull, IsTrue, IsFalse,
+)
+_JSON_NUMERIC_OPS = (GreaterThan, LessThan, Between)
+
+
+@dataclass
+class Json:
+    """
+    Filter a JSONB column by path using another Filters operator.
+
+    Usage:
+        await table.get(metadata=Filters.Json("role", Filters.Equal("admin")))
+        # → metadata->>'role' = $1
+
+        await table.get(metadata=Filters.Json(["meta", "city"], Filters.Equal("Dhaka")))
+        # → metadata->'meta'->>'city' = $1
+
+        await table.get(metadata=Filters.Json(0, Filters.Equal("admin")))
+        # → metadata->>0 = $1
+
+        await table.get(metadata=Filters.Json([1, "name"], Filters.Equal("b")))
+        # → metadata->1->>'name' = $1
+
+        await table.get(metadata=Filters.Json("score", Filters.GreaterThan(10)))
+        # → (metadata->>'score')::numeric > $1
+    """
+    path: JsonPath
+    op: Any
+
+    def to_sql(self, field_name: str, params: list) -> str:
+        if not isinstance(self.op, _JSON_NESTED_OPS):
+            raise ValueError(f"Unsupported JSON filter operator: {type(self.op).__name__}")
+
+        as_text = not isinstance(self.op, (IsTrue, IsFalse))
+        expr = build_json_path_expr(field_name, self.path, as_text=as_text)
+
+        if isinstance(self.op, _JSON_NUMERIC_OPS):
+            expr = f"({expr})::numeric"
+
+        return self.op.to_sql(expr, params)
+
+
+@dataclass
+class JsonContains:
+    """
+    JSONB containment filter using @>.
+
+    Usage:
+        # dict / object
+        await table.get(metadata=Filters.JsonContains({"role": "admin"}))
+        # → metadata @> $1::jsonb
+
+        # list / array
+        await table.get(metadata=Filters.JsonContains(["admin"]))
+        # → metadata @> $1::jsonb
+    """
+    value: Any
+
+    def to_sql(self, field_name: str, params: list) -> str:
+        params.append(json.dumps(self.value))
+        return f"{field_name} @> ${len(params)}::jsonb"
+
+
+@dataclass
+class JsonHasKey:
+    """
+    Check whether a JSONB object has a key using ?.
+
+    Usage:
+        await table.get(metadata=Filters.JsonHasKey("role"))
+        # → metadata ? $1
+    """
+    key: str
+
+    def to_sql(self, field_name: str, params: list) -> str:
+        if not isinstance(self.key, str) or self.key == "":
+            raise ValueError(f"Invalid JSON key: {self.key!r}")
+        params.append(self.key)
+        return f"{field_name} ? ${len(params)}"
+
+
+@dataclass
+class JsonHasAnyKey:
+    """
+    Check whether a JSONB object has any of the given keys using ?|.
+
+    Usage:
+        await table.get(metadata=Filters.JsonHasAnyKey(["role", "email"]))
+        # → metadata ?| $1::text[]
+    """
+    keys: List[str]
+
+    def to_sql(self, field_name: str, params: list) -> str:
+        if not self.keys or not all(isinstance(k, str) and k for k in self.keys):
+            raise ValueError("JsonHasAnyKey requires a non-empty list of non-empty strings")
+        params.append(list(self.keys))
+        return f"{field_name} ?| ${len(params)}::text[]"
+
+
+@dataclass
+class JsonHasAllKeys:
+    """
+    Check whether a JSONB object has all of the given keys using ?&.
+
+    Usage:
+        await table.get(metadata=Filters.JsonHasAllKeys(["role", "score"]))
+        # → metadata ?& $1::text[]
+    """
+    keys: List[str]
+
+    def to_sql(self, field_name: str, params: list) -> str:
+        if not self.keys or not all(isinstance(k, str) and k for k in self.keys):
+            raise ValueError("JsonHasAllKeys requires a non-empty list of non-empty strings")
+        params.append(list(self.keys))
+        return f"{field_name} ?& ${len(params)}::text[]"
+
+
 class Filters:
     @staticmethod
     def Between(from_value: Any = None, to_value: Any = None) -> Between:
@@ -201,3 +325,58 @@ class Filters:
     @staticmethod
     def IsFalse() -> IsFalse:
         return IsFalse()
+
+    @staticmethod
+    def Json(path: JsonPath, op: Any) -> Json:
+        """
+        Filter a JSONB column by path using another Filters operator.
+
+        Usage:
+            await table.get(metadata=Filters.Json("role", Filters.Equal("admin")))
+            await table.get(metadata=Filters.Json(["meta", "city"], Filters.Equal("Dhaka")))
+            await table.get(metadata=Filters.Json(0, Filters.Equal("admin")))
+            await table.get(metadata=Filters.Json([1, "name"], Filters.Equal("b")))
+            await table.get(metadata=Filters.Json("score", Filters.GreaterThan(10)))
+        """
+        return Json(path, op)
+
+    @staticmethod
+    def JsonContains(value: Any) -> JsonContains:
+        """
+        JSONB containment filter using @>.
+
+        Usage:
+            await table.get(metadata=Filters.JsonContains({"role": "admin"}))
+            await table.get(metadata=Filters.JsonContains(["admin"]))
+        """
+        return JsonContains(value)
+
+    @staticmethod
+    def JsonHasKey(key: str) -> JsonHasKey:
+        """
+        Check whether a JSONB object has a key using ?.
+
+        Usage:
+            await table.get(metadata=Filters.JsonHasKey("role"))
+        """
+        return JsonHasKey(key)
+
+    @staticmethod
+    def JsonHasAnyKey(keys: List[str]) -> JsonHasAnyKey:
+        """
+        Check whether a JSONB object has any of the given keys using ?|.
+
+        Usage:
+            await table.get(metadata=Filters.JsonHasAnyKey(["role", "email"]))
+        """
+        return JsonHasAnyKey(keys)
+
+    @staticmethod
+    def JsonHasAllKeys(keys: List[str]) -> JsonHasAllKeys:
+        """
+        Check whether a JSONB object has all of the given keys using ?&.
+
+        Usage:
+            await table.get(metadata=Filters.JsonHasAllKeys(["role", "score"]))
+        """
+        return JsonHasAllKeys(keys)

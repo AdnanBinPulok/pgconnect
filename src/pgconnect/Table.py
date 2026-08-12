@@ -9,6 +9,7 @@ import asyncio
 from .Filters import (
     Between, Like, In, Increment, Decrement, Equal, NotEqual,
     GreaterThan, LessThan, NotIn, IsNull, IsNotNull, IsTrue, IsFalse,
+    Json, JsonContains, JsonHasKey, JsonHasAnyKey, JsonHasAllKeys,
 )
 from .sql_safe import validate_column, validate_columns, validate_order, validate_pagination
 
@@ -686,6 +687,7 @@ class Table:
             if isinstance(value, (
                 Between, Like, In, Increment, Decrement, Equal, NotEqual,
                 GreaterThan, LessThan, NotIn, IsNull, IsNotNull, IsTrue, IsFalse,
+                Json, JsonContains, JsonHasKey, JsonHasAnyKey, JsonHasAllKeys,
             )):
                 conditions.append(value.to_sql(column, params))
             else:
